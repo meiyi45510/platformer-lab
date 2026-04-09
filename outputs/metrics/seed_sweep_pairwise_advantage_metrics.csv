@@ -1,0 +1,13 @@
+metric,controller_a,controller_b,improvement_probability,ci_low,ci_high,sample_count
+avg_total_reward,Risk-Aware Value MPC,Value MPC,0.6,0.2,1.0,5.0
+avg_total_reward,Risk-Aware Value MPC,Dynamic A*,0.4,0.0,0.8,5.0
+avg_total_reward,Risk-Aware Value MPC,Static A*,1.0,1.0,1.0,5.0
+avg_total_reward,Value MPC,Dynamic A*,0.2,0.0,0.6,5.0
+avg_total_reward,Value MPC,Static A*,1.0,1.0,1.0,5.0
+avg_total_reward,Dynamic A*,Static A*,1.0,1.0,1.0,5.0
+success_rate,Risk-Aware Value MPC,Value MPC,0.6,0.5,0.8,5.0
+success_rate,Risk-Aware Value MPC,Dynamic A*,0.5,0.5,0.5,5.0
+success_rate,Risk-Aware Value MPC,Static A*,1.0,1.0,1.0,5.0
+success_rate,Value MPC,Dynamic A*,0.4,0.2,0.5,5.0
+success_rate,Value MPC,Static A*,1.0,1.0,1.0,5.0
+success_rate,Dynamic A*,Static A*,1.0,1.0,1.0,5.0
