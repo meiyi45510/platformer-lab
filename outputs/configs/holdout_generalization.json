@@ -1,0 +1,97 @@
+{
+  "model_file": "holdout_generalization_value_mpc_checkpoint.npz",
+  "holdout_template_families": [
+    "tower",
+    "overhang"
+  ],
+  "in_distribution_template_families": [
+    "staircase",
+    "canyon",
+    "bridge",
+    "gauntlet"
+  ],
+  "train_seed": 20260324,
+  "eval_seed": {
+    "in_distribution": 20260601,
+    "holdout": 20260602
+  },
+  "training_episodes": 480,
+  "evaluation_episodes": 16,
+  "max_steps": 80,
+  "controller": {
+    "width": 24,
+    "height": 14,
+    "hidden_dim": 128,
+    "learning_rate": 0.0036,
+    "weight_decay": 0.0001,
+    "value_huber_delta": 0.8,
+    "value_mae_weight": 0.12,
+    "epochs": 16,
+    "batch_size": 256,
+    "planning_horizon": 4,
+    "gamma": 0.96,
+    "beam_width": 4,
+    "use_rollout_cache": true,
+    "use_predictive_hazards": true,
+    "use_adaptive_planning": false,
+    "learned_terminal_weight": 0.5,
+    "heuristic_terminal_weight": 0.5,
+    "risk_hidden_dim": 96,
+    "risk_learning_rate": 0.003,
+    "risk_weight_decay": 0.0001,
+    "risk_epochs": 8,
+    "risk_batch_size": 256,
+    "risk_horizon": 4,
+    "risk_penalty": 0.0,
+    "risk_decay": 0.85,
+    "risk_dataset_episodes": 28,
+    "failure_replay_episodes": 16,
+    "bootstrap_steps": 6,
+    "use_curriculum_learning": true,
+    "curriculum_enemy_limits": [
+      1,
+      2,
+      3
+    ],
+    "curriculum_phase_weights": [
+      1.0,
+      1.0,
+      12.0
+    ],
+    "use_value_residual": true,
+    "use_teacher_predictive_hazards": true,
+    "guide_bonus": 1.4,
+    "reuse_guide_plan": true,
+    "use_disturbance_aware_planning": false,
+    "disturbance_assumed_prob": 0.12,
+    "disturbance_radius": 4.0,
+    "aggregation_rounds": 3,
+    "risk_target_weight": 0.22,
+    "training_action_noise": 0.04,
+    "risk_action_noise": 0.16,
+    "action_risk_hidden_dim": 80,
+    "action_risk_learning_rate": 0.0026,
+    "action_risk_weight_decay": 0.0001,
+    "action_risk_epochs": 8,
+    "action_risk_batch_size": 256,
+    "action_risk_penalty": 0.0,
+    "use_template_balanced_training": true,
+    "holdout_template_families": [
+      "tower",
+      "overhang"
+    ],
+    "target_mean": 24.39995765686035,
+    "target_std": 2.4525787830352783,
+    "risk_temperature": 0.9000000000000001,
+    "action_risk_temperature": 0.9500000000000001,
+    "fitted": true,
+    "risk_fitted": true,
+    "action_risk_fitted": true,
+    "label": "Value MPC"
+  },
+  "risk_clone": {
+    "risk_penalty": 0.2,
+    "action_risk_penalty": 0.12,
+    "beam_width": 3
+  }
+}
