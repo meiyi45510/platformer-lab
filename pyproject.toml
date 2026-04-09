@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "platformer-lab"
+version = "0.1.0"
+description = "Compact CLI-first retro AI showcase for a handcrafted 2D platformer, with pure-NumPy Value MPC, A* baselines, risk-aware planning, and curated report artifacts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "meiyi45510" },
+]
+keywords = [
+  "platformer",
+  "game-ai",
+  "value-mpc",
+  "model-predictive-control",
+  "risk-aware-planning",
+  "a-star",
+  "numpy",
+  "matplotlib",
+  "benchmark",
+  "cli",
+  "retro-arcade",
+  "showcase",
+  "artifact-driven",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Games/Entertainment",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "matplotlib>=3.8",
+  "numpy>=1.26",
+]
+
+[project.scripts]
+platformer-lab = "platformer_lab:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.package-data]
+platformer_lab = ["assets/fonts/*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["platformer_lab*"]
