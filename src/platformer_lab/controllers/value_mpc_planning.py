@@ -18,6 +18,53 @@ from ..environment import (
 class ValueMpcPlanningMixin(ValueMpcBase):
     """Planning logic shared by the learned MPC controller."""
 
+    def _compute_risk_penalty(
+        self,
+        penalty: float,
+        observation: ObservationData,
+        radius: float,
+        air_weight: float,
+        threshold: float,
+        environment: PlatformerEnv | None,
+        risk_cache: RiskCache | None,
+        cache_key_prefix: str | None = None,
+        action: int | None = None,
+    ) -> float:
+        """Shared helper for state and action risk penalty computation."""
+        if penalty <= 0:
+            return 0.0
+        distance = nearest_patrol_distance(
+            observation["position"],
+            set(observation["enemy_positions"]),
+        )
+        proximity = float(np.clip((radius - distance) / radius, 0.0, 1.0))
+        air_fraction = 1.0 - float(observation["grounded"])
+        scale = max(proximity, air_weight * air_fraction)
+        if scale <= threshold:
+            return 0.0
+        if risk_cache is not None and environment is not None:
+            key = (
+                (cache_key_prefix, environment.state_signature(), int(action))
+                if cache_key_prefix is not None and action is not None
+                else environment.state_signature()
+            )
+            prob = risk_cache.get(key)
+            if prob is None:
+                prob = (
+                    self.predict_action_hazard(
+                        observation, action, environment)
+                    if action is not None
+                    else self.predict_state_risk(observation, environment)
+                )
+                risk_cache[key] = prob
+        else:
+            prob = (
+                self.predict_action_hazard(observation, action, environment)
+                if action is not None
+                else self.predict_state_risk(observation, environment)
+            )
+        return penalty * scale * prob
+
     def _state_risk_penalty(
         self,
         observation: ObservationData,
@@ -25,26 +72,15 @@ class ValueMpcPlanningMixin(ValueMpcBase):
         risk_cache: RiskCache | None = None,
     ) -> float:
         """Returns the state-risk penalty for the current observation."""
-        if self.risk_penalty <= 0:
-            return 0.0
-        distance = nearest_patrol_distance(
-            observation["position"],
-            set(observation["enemy_positions"]),
+        return self._compute_risk_penalty(
+            penalty=self.risk_penalty,
+            observation=observation,
+            radius=3.5,
+            air_weight=0.45,
+            threshold=0.08,
+            environment=environment,
+            risk_cache=risk_cache,
         )
-        proximity = float(np.clip((3.5 - distance) / 3.5, 0.0, 1.0))
-        air_fraction = 1.0 - float(observation["grounded"])
-        scale = max(proximity, 0.45 * air_fraction)
-        if scale <= 0.08:
-            return 0.0
-        if risk_cache is not None and environment is not None:
-            key = environment.state_signature()
-            prob = risk_cache.get(key)
-            if prob is None:
-                prob = self.predict_state_risk(observation, environment)
-                risk_cache[key] = prob
-        else:
-            prob = self.predict_state_risk(observation, environment)
-        return self.risk_penalty * scale * prob
 
     def _action_risk_penalty(
         self,
@@ -54,27 +90,17 @@ class ValueMpcPlanningMixin(ValueMpcBase):
         risk_cache: RiskCache | None = None,
     ) -> float:
         """Returns the cached action-risk penalty for a candidate action."""
-        if self.action_risk_penalty <= 0:
-            return 0.0
-        distance = nearest_patrol_distance(
-            observation["position"],
-            set(observation["enemy_positions"]),
+        return self._compute_risk_penalty(
+            penalty=self.action_risk_penalty,
+            observation=observation,
+            radius=4.0,
+            air_weight=0.28,
+            threshold=0.06,
+            environment=environment,
+            risk_cache=risk_cache,
+            cache_key_prefix="action",
+            action=action,
         )
-        proximity = float(np.clip((4.0 - distance) / 4.0, 0.0, 1.0))
-        air_fraction = 1.0 - float(observation["grounded"])
-        scale = max(proximity, 0.28 * air_fraction)
-        if scale <= 0.06:
-            return 0.0
-        if risk_cache is not None and environment is not None:
-            key = ("action", environment.state_signature(), int(action))
-            prob = risk_cache.get(key)
-            if prob is None:
-                prob = self.predict_action_hazard(
-                    observation, action, environment)
-                risk_cache[key] = prob
-        else:
-            prob = self.predict_action_hazard(observation, action, environment)
-        return self.action_risk_penalty * scale * prob
 
     def _terminal_rollout_score(
         self,
@@ -265,19 +291,15 @@ class ValueMpcPlanningMixin(ValueMpcBase):
         if environment.done:
             return 0.0
         key = (
-            (
-                depth,
-                self.beam_width if beam is None else beam,
-                environment.state_signature(),
-            )
-            if memo is not None
-            else None
+            depth,
+            self.beam_width if beam is None else beam,
+            environment.state_signature(),
         )
-        if key is not None and key in memo:
+        if memo is not None and key in memo:
             return memo[key]
         if depth <= 0:
             value = self._terminal_rollout_score(environment, risk_cache)
-            if key is not None:
+            if memo is not None:
                 memo[key] = value
             return value
         best_score = -1e9
@@ -303,7 +325,7 @@ class ValueMpcPlanningMixin(ValueMpcBase):
                 * self._rollout_score(child, depth - 1,
                                       memo, risk_cache, beam),
             )
-        if key is not None:
+        if memo is not None:
             memo[key] = best_score
         return best_score
 
@@ -345,7 +367,8 @@ class ValueMpcPlanningMixin(ValueMpcBase):
                 or not observation["grounded"]
             )
         )
-        best_action = (0, -1e9)
+        best_action_id = 0
+        best_score = -1e9
         for action in self._candidate_action_ids(environment, beam_width):
             score = (
                 self._score_noisy_action_rollout(
@@ -366,15 +389,16 @@ class ValueMpcPlanningMixin(ValueMpcBase):
                     beam_width,
                 )
             ) + (self.guide_bonus if action == preferred_action else 0)
-            if score > best_action[1]:
-                best_action = (action, score)
+            if score > best_score:
+                best_action_id = action
+                best_score = score
         if (
             self.reuse_guide_plan
             and guide_plan
-            and best_action[0] == guide_plan[0]
+            and best_action_id == guide_plan[0]
         ):
             child = environment.clone()
-            child.step(best_action[0])
+            child.step(best_action_id)
             self._guide_follow_state = (
                 (id(environment.level), child.state_signature())
                 if (not child.done and len(guide_plan) > 1)
@@ -386,4 +410,4 @@ class ValueMpcPlanningMixin(ValueMpcBase):
         else:
             self._guide_follow_state = None
             self._guide_follow_plan = ()
-        return best_action[0]
+        return best_action_id

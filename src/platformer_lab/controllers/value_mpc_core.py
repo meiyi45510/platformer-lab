@@ -1,6 +1,7 @@
 """Core configuration, encoding, and model-head utilities for learned MPC."""
 
 import math
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -14,10 +15,6 @@ from .value_mpc_base import (
     ValueMpcBase,
     ValueMpcBaseT,
 )
-from ..settings import (
-    RISK_CLONE_ACTION_PENALTY_WEIGHT,
-    RISK_CLONE_STATE_PENALTY,
-)
 from ..environment import (
     ACTION_SPACE_SIZE,
     FloatMatrix,
@@ -29,6 +26,10 @@ from ..environment import (
     estimate_goal_distance,
     level_family_name,
     nearest_patrol_distance,
+)
+from ..settings import (
+    RISK_CLONE_ACTION_PENALTY_WEIGHT,
+    RISK_CLONE_STATE_PENALTY,
 )
 
 MODEL_PARAMETER_FIELDS = (
@@ -275,10 +276,24 @@ class ValueMpcCoreMixin(ValueMpcBase):
         """Initializes a two-layer MLP block with He-style random weights."""
         rng = np.random.default_rng(deterministic_seed)
         return (
-            rng.normal(0, math.sqrt(2 / input_dim), (input_dim, hidden_dim)),
-            np.zeros(hidden_dim),
-            rng.normal(0, math.sqrt(2 / hidden_dim), (hidden_dim, 1)),
-            np.zeros(1),
+            np.asarray(
+                rng.normal(
+                    0,
+                    math.sqrt(2 / input_dim),
+                    (input_dim, hidden_dim),
+                ),
+                dtype=np.float32,
+            ),
+            np.zeros(hidden_dim, dtype=np.float32),
+            np.asarray(
+                rng.normal(
+                    0,
+                    math.sqrt(2 / hidden_dim),
+                    (hidden_dim, 1),
+                ),
+                dtype=np.float32,
+            ),
+            np.zeros(1, dtype=np.float32),
         )
 
     @staticmethod
@@ -290,29 +305,41 @@ class ValueMpcCoreMixin(ValueMpcBase):
     ) -> ArrayTuple:
         """Clips model weights into stable numeric ranges after loading."""
         return (
-            np.nan_to_num(
-                np.clip(value_hidden_weights, -0.6, 0.6),
-                nan=0.0,
-                posinf=0.6,
-                neginf=-0.6,
+            np.asarray(
+                np.nan_to_num(
+                    np.clip(value_hidden_weights, -0.6, 0.6),
+                    nan=0.0,
+                    posinf=0.6,
+                    neginf=-0.6,
+                ),
+                dtype=np.float32,
             ),
-            np.nan_to_num(
-                np.clip(value_hidden_bias, -1.5, 1.5),
-                nan=0.0,
-                posinf=1.5,
-                neginf=-1.5,
+            np.asarray(
+                np.nan_to_num(
+                    np.clip(value_hidden_bias, -1.5, 1.5),
+                    nan=0.0,
+                    posinf=1.5,
+                    neginf=-1.5,
+                ),
+                dtype=np.float32,
             ),
-            np.nan_to_num(
-                np.clip(value_output_weights, -0.6, 0.6),
-                nan=0.0,
-                posinf=0.6,
-                neginf=-0.6,
+            np.asarray(
+                np.nan_to_num(
+                    np.clip(value_output_weights, -0.6, 0.6),
+                    nan=0.0,
+                    posinf=0.6,
+                    neginf=-0.6,
+                ),
+                dtype=np.float32,
             ),
-            np.nan_to_num(
-                np.clip(value_output_bias, -1.5, 1.5),
-                nan=0.0,
-                posinf=1.5,
-                neginf=-1.5,
+            np.asarray(
+                np.nan_to_num(
+                    np.clip(value_output_bias, -1.5, 1.5),
+                    nan=0.0,
+                    posinf=1.5,
+                    neginf=-1.5,
+                ),
+                dtype=np.float32,
             ),
         )
 
@@ -355,7 +382,7 @@ class ValueMpcCoreMixin(ValueMpcBase):
             deterministic_seed,
         )
 
-    def _sanitize_loaded_weights(self) -> None:
+    def sanitize_loaded_parameters(self) -> None:
         """Sanitizes all loaded model heads after restoring a checkpoint."""
         (
             self.value_hidden_weights,
@@ -416,10 +443,6 @@ class ValueMpcCoreMixin(ValueMpcBase):
     def _parameter_values(self) -> dict[str, Any]:
         """Returns the config values needed to rebuild the controller."""
         return {name: getattr(self, name) for name in CONFIGURATION_FIELDS}
-
-    def sanitize_loaded_parameters(self) -> None:
-        """Sanitizes parameters restored from checkpoint artifacts."""
-        self._sanitize_loaded_weights()
 
     def configuration_parameters(self) -> dict[str, Any]:
         """Exposes the controller settings that define its behavior."""
@@ -483,14 +506,14 @@ class ValueMpcCoreMixin(ValueMpcBase):
         )
         features = self._feature_base_cache.get(cache_key)
         if features is None:
-            features = np.zeros(grid_area * 6 + 5, np.float32)
+            features = np.zeros(grid_area * 6 + 5, dtype=np.float32)
             for row, col in observation["solid_tiles"]:
                 features[row * width + col] = 1
             goal_row, goal_col = observation["goal"]
             features[5 * grid_area + goal_row * width + goal_col] = 1
             if cache_key is not None:
                 self._feature_base_cache[cache_key] = features
-        features = np.array(features, copy=True)
+        features = np.array(features, copy=True, dtype=np.float32)
         enemies = set(observation["enemy_positions"])
         row, col = observation["position"]
         goal_row, goal_col = observation["goal"]
@@ -506,13 +529,13 @@ class ValueMpcCoreMixin(ValueMpcBase):
             features[3 * grid_area + enemy_row * width + enemy_col] = 1
         features[4 * grid_area + row * width + col] = 1
         patrol_distance = nearest_patrol_distance((row, col), enemies)
-        features[6 * grid_area: 6 * grid_area + 5] = [
+        features[6 * grid_area: 6 * grid_area + 5] = np.asarray([
             float(observation["velocity_y"]) / MAX_FALL_VELOCITY,
             float(observation["grounded"]),
             (goal_row - row) / max(1.0, height),
             (goal_col - col) / max(1.0, width),
             min(patrol_distance / max(width, height), 1.5),
-        ]
+        ], dtype=np.float32)
         return features
 
     def encode_action(
@@ -522,7 +545,7 @@ class ValueMpcCoreMixin(ValueMpcBase):
         environment: PlatformerEnv | None = None,
     ) -> FloatMatrix:
         """Extends the observation encoding with a one-hot action vector."""
-        features = np.empty(self.action_input_dim, np.float32)
+        features = np.empty(self.action_input_dim, dtype=np.float32)
         features[: self.input_dim] = self.encode_observation(
             observation, environment)
         features[self.input_dim:] = 0.0
@@ -541,8 +564,9 @@ class ValueMpcCoreMixin(ValueMpcBase):
                 inputs @ self.value_hidden_weights + self.value_hidden_bias
             )
             hidden = self._relu_activation(hidden_pre)
-            output = (hidden @ self.value_output_weights +
-                      self.value_output_bias)[:, 0]
+            output = (
+                hidden @ self.value_output_weights + self.value_output_bias
+            )[:, 0]
         return hidden_pre, hidden, output
 
     def _forward_sigmoid_head(
@@ -560,7 +584,11 @@ class ValueMpcCoreMixin(ValueMpcBase):
             hidden_pre = inputs @ value_hidden_weights + value_hidden_bias
             hidden = self._relu_activation(hidden_pre)
             logits = (hidden @ value_output_weights + value_output_bias)[:, 0]
-            probs = 1 / (1 + np.exp(-np.clip(logits / temperature, -20, 20)))
+            clipped = np.clip(logits / temperature, -20, 20)
+            probs = np.asarray(
+                1 / (1 + np.exp(-clipped)),
+                dtype=np.float32,
+            )
         return hidden_pre, hidden, logits, probs
 
     def _forward_state_risk_head(
@@ -618,8 +646,12 @@ class ValueMpcCoreMixin(ValueMpcBase):
         *configuration_parameters: np.ndarray,
     ) -> ArrayTuple:
         """Copies parameter arrays for later best-checkpoint restoration."""
-        return tuple(np.array(parameter, copy=True)
-                     for parameter in configuration_parameters)
+        return (
+            np.array(configuration_parameters[0], copy=True, dtype=np.float32),
+            np.array(configuration_parameters[1], copy=True, dtype=np.float32),
+            np.array(configuration_parameters[2], copy=True, dtype=np.float32),
+            np.array(configuration_parameters[3], copy=True, dtype=np.float32),
+        )
 
     def _prepare_fit_state(
         self,
@@ -674,7 +706,10 @@ class ValueMpcCoreMixin(ValueMpcBase):
         positive_rate = float(positive_mask.mean()) if len(targets) else 0.0
         scale = min(6.0, max(1.0, (1 - positive_rate) /
                     max(positive_rate, 1e-4)))
-        return 1 + (scale - 1) * positive_mask.astype(np.float32)
+        return np.asarray(
+            1 + (scale - 1) * positive_mask.astype(np.float32),
+            dtype=np.float32,
+        )
 
     @staticmethod
     def _weighted_binary_cross_entropy(
@@ -693,7 +728,7 @@ class ValueMpcCoreMixin(ValueMpcBase):
 
     @staticmethod
     def _calibrate_head_temperature(
-        logits: np.ndarray,
+        logits: FloatMatrix,
         targets: FloatMatrix,
     ) -> float:
         """Calibrates a sigmoid head temperature on held-out logits."""
@@ -749,7 +784,7 @@ class ValueMpcCoreMixin(ValueMpcBase):
             value_output_weights,
         )
         mae = float(np.mean(np.abs(probs - targets)))
-        return (
+        return self._pack_gradient_result(
             loss,
             mae,
             grad_value_hidden_weights,
@@ -766,11 +801,11 @@ class ValueMpcCoreMixin(ValueMpcBase):
         rng: np.random.Generator,
         epochs: int,
         reinitialize: bool,
-        init_fn: Any,
-        grad_fn: Any,
-        loss_fn: Any,
-        update_fn: Any,
-        forward_fn: Any,
+        init_fn: Callable[[int], None],
+        grad_fn: Callable[[FloatMatrix, FloatMatrix], GradientResult],
+        loss_fn: Callable[[FloatMatrix, FloatMatrix], tuple[float, float]],
+        update_fn: Callable[..., None],
+        forward_fn: Callable[[FloatMatrix, float | None], SigmoidHeadOutput],
         batch_size: int,
         learning_rate: float,
         param_names: tuple[str, str, str, str],
@@ -780,8 +815,14 @@ class ValueMpcCoreMixin(ValueMpcBase):
     ) -> list[dict[str, float]]:
         """Fits one binary hazard head with grouped train/validation splits."""
         train_ids, val_ids = self._split_grouped_indices(group_ids, rng)
-        train_features, val_features = features[train_ids], features[val_ids]
-        train_targets, val_targets = targets[train_ids], targets[val_ids]
+        train_features: FloatMatrix = np.asarray(
+            features[train_ids], dtype=np.float32)
+        val_features: FloatMatrix = np.asarray(
+            features[val_ids], dtype=np.float32)
+        train_targets: FloatMatrix = np.asarray(
+            targets[train_ids], dtype=np.float32)
+        val_targets: FloatMatrix = np.asarray(
+            targets[val_ids], dtype=np.float32)
         setattr(self, temperature_attr, 1.0)
         if reinitialize:
             init_fn(int(rng.integers(0, 10**9)))
@@ -844,7 +885,8 @@ class ValueMpcCoreMixin(ValueMpcBase):
             self,
             temperature_attr,
             self._calibrate_head_temperature(
-                forward_fn(val_features, 1.0)[2], val_targets
+                np.asarray(forward_fn(val_features, 1.0)[2], dtype=np.float32),
+                val_targets,
             ),
         )
         setattr(self, history_attr, history)

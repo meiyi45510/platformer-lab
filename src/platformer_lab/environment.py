@@ -13,15 +13,15 @@ import heapq
 import math
 
 import numpy as np
-import numpy.typing as npt
 
 # Shared type aliases used across environment simulation and model fitting.
 GridPosition = tuple[int, int]
 PlannerState = tuple[int, int, int, int]
 ObservationData = dict[str, Any]
-FloatMatrix = npt.NDArray[np.float32]
-IntVector = npt.NDArray[np.int32]
+FloatMatrix = np.ndarray
+IntVector = np.ndarray
 TrainingDataset = tuple[FloatMatrix, FloatMatrix, IntVector]
+
 EnemySignature = tuple[int, int]
 EnvironmentSignature = tuple[
     GridPosition,
@@ -404,7 +404,7 @@ def patrol_timetable_key(
     )
 
 
-_PATROL_TIMETABLE_CACHE = {}
+_PATROL_TIMETABLE_CACHE: dict[Any, tuple[frozenset[GridPosition], ...]] = {}
 
 
 def advance_patrol_group(enemies: Sequence[PatrolEnemy]) -> None:

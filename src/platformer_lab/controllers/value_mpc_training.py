@@ -1,11 +1,16 @@
 """Training-set construction and fitting utilities for learned MPC."""
 
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import cast
 
 import numpy as np
 
-from .value_mpc_base import GradientResult, OptimizerState, ValueMpcBase
+from .value_mpc_base import (
+    GradientResult,
+    OptimizerState,
+    SigmoidHeadOutput,
+    ValueMpcBase,
+)
 from ..environment import (
     AVAILABLE_ACTIONS,
     DynamicAStarController,
@@ -23,6 +28,8 @@ from ..environment import (
 )
 from ..evaluation import sample_noisy_action
 
+_ADAM_CLIP_RANGES = [(-0.6, 0.6), (-1.5, 1.5), (-0.6, 0.6), (-1.5, 1.5)]
+
 
 class ValueMpcTrainingMixin(ValueMpcBase):
     """Training and data-collection routines for the learned MPC controller."""
@@ -37,24 +44,33 @@ class ValueMpcTrainingMixin(ValueMpcBase):
         residuals = predictions - targets
         delta = self.value_huber_delta
         scaled = np.sqrt(1 + (residuals / delta) ** 2)
-        loss = float(np.mean(delta * delta * (scaled - 1)))
+        loss = float(np.mean(np.asarray(
+            delta * delta * (scaled - 1),
+            dtype=np.float32,
+        )))
         loss += 0.5 * self.weight_decay * self._l2_weight_norm(
             self.value_hidden_weights,
             self.value_output_weights,
         )
-        return loss, float(np.mean(np.abs(residuals)))
+        return (
+            loss,
+            float(np.mean(np.asarray(
+                np.abs(residuals),
+                dtype=np.float32,
+            ))),
+        )
 
     def _binary_head_loss(
         self,
         inputs: FloatMatrix,
         targets: FloatMatrix,
-        forward_fn: Any,
+        forward_fn: Callable[[FloatMatrix, float | None], SigmoidHeadOutput],
         weight_decay: float,
         value_hidden_weights: np.ndarray,
         value_output_weights: np.ndarray,
     ) -> tuple[float, float]:
         """Computes the regularized loss and MAE for a binary hazard head."""
-        probs = np.clip(forward_fn(inputs)[3], 1e-6, 1 - 1e-6)
+        probs = np.clip(forward_fn(inputs, None)[3], 1e-6, 1 - 1e-6)
         weights = self._binary_class_weights(targets)
         loss = self._weighted_binary_cross_entropy(targets, probs, weights)
         loss += 0.5 * weight_decay * self._l2_weight_norm(
@@ -108,7 +124,7 @@ class ValueMpcTrainingMixin(ValueMpcBase):
         grad = residuals / scaled + mae_weight * residuals / np.sqrt(
             residuals * residuals + epsilon * epsilon
         )
-        grad = grad[:, None] / len(targets)
+        grad = cast(FloatMatrix, grad[:, None] / len(targets))
         with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
             grad_value_output_weights = np.clip(
                 hidden.T @ grad
@@ -126,12 +142,15 @@ class ValueMpcTrainingMixin(ValueMpcBase):
                 0.8,
             )
             grad_value_hidden_bias = np.clip(grad_hidden.sum(0), -0.8, 0.8)
-        loss = float(np.mean(delta * delta * (scaled - 1)))
+        loss = float(np.mean(np.asarray(
+            delta * delta * (scaled - 1),
+            dtype=np.float32,
+        )))
         loss += 0.5 * self.weight_decay * self._l2_weight_norm(
             self.value_hidden_weights,
             self.value_output_weights,
         )
-        return (
+        return self._pack_gradient_result(
             loss,
             float(np.mean(np.abs(residuals))),
             grad_value_hidden_weights,
@@ -187,17 +206,19 @@ class ValueMpcTrainingMixin(ValueMpcBase):
         """Builds shuffled mini-batch index slices."""
         indices = np.asarray(rng.permutation(sample_count), dtype=np.int32)
         batch_size = max(1, min(int(batch_size), sample_count))
-        return [
-            np.asarray(indices[start: start + batch_size], dtype=np.int32)
-            for start in range(0, sample_count, batch_size)
-        ]
+        batches: list[IntVector] = []
+        for start in range(0, sample_count, batch_size):
+            batches.append(
+                np.asarray(indices[start: start + batch_size], dtype=np.int32)
+            )
+        return batches
 
     def _empty_training_set(self) -> TrainingDataset:
         """Returns an empty training set with the observation feature shape."""
         return (
-            np.empty((0, self.input_dim), np.float32),
-            np.empty(0, np.float32),
-            np.empty(0, np.int32),
+            np.empty((0, self.input_dim), dtype=np.float32),
+            np.empty(0, dtype=np.float32),
+            np.empty(0, dtype=np.int32),
         )
 
     def _pack_training_set(
@@ -211,9 +232,9 @@ class ValueMpcTrainingMixin(ValueMpcBase):
             self._empty_training_set()
             if not targets
             else (
-                np.vstack(features).astype(np.float32),
-                np.array(targets, np.float32),
-                np.array(groups, np.int32),
+                np.asarray(np.vstack(features), dtype=np.float32),
+                np.asarray(targets, dtype=np.float32),
+                np.asarray(groups, dtype=np.int32),
             )
         )
 
@@ -226,18 +247,20 @@ class ValueMpcTrainingMixin(ValueMpcBase):
         for features, targets, groups in sets:
             if len(targets) == 0:
                 continue
-            merged_features.append(np.asarray(features, np.float32))
-            merged_targets.append(np.asarray(targets, np.float32))
-            groups = np.asarray(groups, np.int32)
+            merged_features.append(np.asarray(features, dtype=np.float32))
+            merged_targets.append(np.asarray(targets, dtype=np.float32))
+            groups = np.asarray(groups, dtype=np.int32)
             merged_groups.append(groups + offset)
             offset += int(groups.max()) + 1 if len(groups) else 0
         return (
             self._empty_training_set()
             if not merged_targets
             else (
-                np.vstack(merged_features).astype(np.float32),
-                np.concatenate(merged_targets).astype(np.float32),
-                np.concatenate(merged_groups).astype(np.int32),
+                np.asarray(np.vstack(merged_features), dtype=np.float32),
+                np.asarray(
+                    np.concatenate(merged_targets), dtype=np.float32),
+                np.asarray(
+                    np.concatenate(merged_groups), dtype=np.int32),
             )
         )
 
@@ -248,7 +271,7 @@ class ValueMpcTrainingMixin(ValueMpcBase):
         val_frac: float = 0.2,
     ) -> tuple[IntVector, IntVector]:
         """Splits grouped samples into train and validation partitions."""
-        group_ids = np.asarray(groups, np.int32)
+        group_ids = np.asarray(groups, dtype=np.int32)
         if len(group_ids) < 2:
             singleton_ids = np.arange(len(group_ids), dtype=np.int32)
             return singleton_ids, singleton_ids
@@ -274,8 +297,8 @@ class ValueMpcTrainingMixin(ValueMpcBase):
             )
             val_count = max(1, min(len(group_ids) - 1,
                                    int(round(val_frac * len(group_ids)))))
-            val_ids = shuffled_ids[:val_count]
-            train_ids = shuffled_ids[val_count:]
+            val_ids = np.asarray(shuffled_ids[:val_count], dtype=np.int32)
+            train_ids = np.asarray(shuffled_ids[val_count:], dtype=np.int32)
         return train_ids, val_ids
 
     def _build_risk_targets(self, hazards: Sequence[float]) -> list[float]:
@@ -410,7 +433,7 @@ class ValueMpcTrainingMixin(ValueMpcBase):
             ],
             optimizer,
             learning_rate,
-            [(-0.6, 0.6), (-1.5, 1.5), (-0.6, 0.6), (-1.5, 1.5)],
+            _ADAM_CLIP_RANGES,
         )
 
     def _update_state_risk_weights(
@@ -438,7 +461,7 @@ class ValueMpcTrainingMixin(ValueMpcBase):
             ],
             optimizer,
             learning_rate,
-            [(-0.6, 0.6), (-1.5, 1.5), (-0.6, 0.6), (-1.5, 1.5)],
+            _ADAM_CLIP_RANGES,
         )
 
     def _update_action_risk_weights(
@@ -466,7 +489,7 @@ class ValueMpcTrainingMixin(ValueMpcBase):
             ],
             optimizer,
             learning_rate,
-            [(-0.6, 0.6), (-1.5, 1.5), (-0.6, 0.6), (-1.5, 1.5)],
+            _ADAM_CLIP_RANGES,
         )
 
     @staticmethod
@@ -566,7 +589,9 @@ class ValueMpcTrainingMixin(ValueMpcBase):
         if not self.fitted:
             return bias
         value = float(
-            self._f(np.asarray(features, np.float32).reshape(1, -1))[2][0]
+            self._f(
+                np.asarray(features, dtype=np.float32).reshape(1, -1),
+            )[2][0]
             * self.target_std
             + self.target_mean
         )
@@ -591,9 +616,10 @@ class ValueMpcTrainingMixin(ValueMpcBase):
                 discount *= self.gamma
                 stop += 1
             if stop < count:
+                baseline = 0.0 if baselines is None else float(baselines[stop])
                 total += discount * self._bootstrap_value_prediction(
                     episode_features[stop],
-                    0.0 if baselines is None else baselines[stop],
+                    baseline,
                 )
             returns[start] = total
         return returns
@@ -756,7 +782,7 @@ class ValueMpcTrainingMixin(ValueMpcBase):
         while len(schedule) < episodes:
             schedule.extend(
                 [
-                    int(template_ids[index])
+                    int(template_ids[int(index)])
                     for index in rng.permutation(len(template_ids))
                 ]
             )
@@ -796,20 +822,21 @@ class ValueMpcTrainingMixin(ValueMpcBase):
     ) -> list[dict[str, float]]:
         """Fits the terminal value model used by short-horizon MPC rollouts."""
         train_ids, val_ids = self._split_grouped_indices(group_ids, rng)
-        train_features, val_features = features[train_ids], features[val_ids]
-        train_targets_raw, val_targets_raw = (
-            targets[train_ids],
-            targets[val_ids],
-        )
+        train_features: FloatMatrix = np.asarray(
+            features[train_ids], dtype=np.float32)
+        val_features: FloatMatrix = np.asarray(
+            features[val_ids], dtype=np.float32)
+        train_targets_raw = np.asarray(targets[train_ids], dtype=np.float32)
+        val_targets_raw = np.asarray(targets[val_ids], dtype=np.float32)
         self.target_mean = float(train_targets_raw.mean())
         self.target_std = float(train_targets_raw.std() + 1e-6)
         target_mean = np.float32(self.target_mean)
         target_std = np.float32(self.target_std)
-        train_targets = np.asarray(
+        train_targets: FloatMatrix = np.asarray(
             (train_targets_raw - target_mean) / target_std,
             dtype=np.float32,
         )
-        val_targets = np.asarray(
+        val_targets: FloatMatrix = np.asarray(
             (val_targets_raw - target_mean) / target_std,
             dtype=np.float32,
         )

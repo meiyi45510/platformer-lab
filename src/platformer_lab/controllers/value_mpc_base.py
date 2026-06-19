@@ -12,16 +12,16 @@ from ..environment import (
     PlatformerEnv,
 )
 
-ArrayTuple = tuple[np.ndarray, ...]
-ForwardOutput = tuple[np.ndarray, np.ndarray, np.ndarray]
-SigmoidHeadOutput = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+ArrayTuple = tuple[FloatMatrix, FloatMatrix, FloatMatrix, FloatMatrix]
+ForwardOutput = tuple[FloatMatrix, FloatMatrix, FloatMatrix]
+SigmoidHeadOutput = tuple[FloatMatrix, FloatMatrix, FloatMatrix, FloatMatrix]
 GradientResult = tuple[
     float,
     float,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
+    FloatMatrix,
+    FloatMatrix,
+    FloatMatrix,
+    FloatMatrix,
 ]
 OptimizerState = dict[str, Any]
 RiskCache = dict[Any, float]
@@ -93,25 +93,25 @@ class ValueMpcBase:
     action_risk_temperature: float
     risk_training_history: list[dict[str, float]]
     action_risk_training_history: list[dict[str, float]]
-    _feature_base_cache: dict[Any, np.ndarray]
+    _feature_base_cache: dict[Any, FloatMatrix]
     _guide_follow_state: Any | None
     _guide_follow_plan: tuple[int, ...]
     _risk_clone_penalty: float
     _risk_clone_action_risk_penalty: float
     risk_clone_state_penalty: float
     risk_clone_action_penalty: float
-    value_hidden_weights: np.ndarray
-    value_hidden_bias: np.ndarray
-    value_output_weights: np.ndarray
-    value_output_bias: np.ndarray
-    state_risk_hidden_weights: np.ndarray
-    state_risk_hidden_bias: np.ndarray
-    state_risk_output_weights: np.ndarray
-    state_risk_output_bias: np.ndarray
-    action_risk_hidden_weights: np.ndarray
-    action_risk_hidden_bias: np.ndarray
-    action_risk_output_weights: np.ndarray
-    action_risk_output_bias: np.ndarray
+    value_hidden_weights: FloatMatrix
+    value_hidden_bias: FloatMatrix
+    value_output_weights: FloatMatrix
+    value_output_bias: FloatMatrix
+    state_risk_hidden_weights: FloatMatrix
+    state_risk_hidden_bias: FloatMatrix
+    state_risk_output_weights: FloatMatrix
+    state_risk_output_bias: FloatMatrix
+    action_risk_hidden_weights: FloatMatrix
+    action_risk_hidden_bias: FloatMatrix
+    action_risk_output_weights: FloatMatrix
+    action_risk_output_bias: FloatMatrix
 
     @staticmethod
     def _build_optimizer_state(*parameters: np.ndarray) -> OptimizerState:
@@ -281,11 +281,30 @@ class ValueMpcBase:
 
     @staticmethod
     def _calibrate_head_temperature(
-        logits: np.ndarray,
+        logits: FloatMatrix,
         targets: FloatMatrix,
     ) -> float:
         """Calibrates a sigmoid head temperature."""
         raise NotImplementedError
+
+    @staticmethod
+    def _pack_gradient_result(
+        loss: float,
+        mae: float,
+        grad_value_hidden_weights: Any,
+        grad_value_hidden_bias: Any,
+        grad_value_output_weights: Any,
+        grad_value_output_bias: Any,
+    ) -> GradientResult:
+        """Packs clipped gradient arrays into a typed result tuple."""
+        return (
+            loss,
+            mae,
+            np.asarray(grad_value_hidden_weights, dtype=np.float32),
+            np.asarray(grad_value_hidden_bias, dtype=np.float32),
+            np.asarray(grad_value_output_weights, dtype=np.float32),
+            np.asarray(grad_value_output_bias, dtype=np.float32),
+        )
 
     def _fit_binary_head(
         self,

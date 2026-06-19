@@ -1,22 +1,20 @@
 {
-  "model_file": "holdout_generalization_value_mpc_checkpoint.npz",
-  "holdout_template_families": [
+  "model_file": "holdout.npz",
+  "holdout_families": [
     "tower",
     "overhang"
   ],
-  "in_distribution_template_families": [
+  "train_families": [
     "staircase",
     "canyon",
     "bridge",
     "gauntlet"
   ],
   "train_seed": 20260324,
-  "eval_seed": {
-    "in_distribution": 20260601,
-    "holdout": 20260602
-  },
-  "training_episodes": 480,
-  "evaluation_episodes": 16,
+  "eval_seed_train": 20260601,
+  "eval_seed_holdout": 20260602,
+  "train_episodes": 480,
+  "eval_episodes": 16,
   "max_steps": 80,
   "controller": {
     "width": 24,
