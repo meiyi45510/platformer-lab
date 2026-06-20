@@ -9,7 +9,7 @@ from typing import cast
 import numpy as np
 
 from .artifacts import (
-    controller_configuration,
+    build_controller_runtime_metadata,
     create_risk_clone,
     load_controller_snapshot,
     save_controller_snapshot,
@@ -68,8 +68,18 @@ def display_path(path: Path) -> str:
         return str(path)
 
 
+CONTROLLER_CLI_KEYS = {
+    "Static A*": "static_astar",
+    "Dynamic A*": "dynamic_astar",
+    "Value MPC": "value_mpc",
+    "Risk-Aware Value MPC": "risk_mpc",
+}
+
+
 def cli_key(text: str) -> str:
-    """Converts free-form labels into stable snake_case CLI tokens."""
+    """Converts free-form labels into stable, short CLI tokens."""
+    if text in CONTROLLER_CLI_KEYS:
+        return CONTROLLER_CLI_KEYS[text]
     normalized = text.lower().replace("*", " star ")
     return re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
 
@@ -136,9 +146,9 @@ def log_event(channel: str, **fields: object) -> None:
 
 
 # =============================================================================
-# Holdout generalization study.
+# Holdout study.
 # =============================================================================
-def run_holdout_generalization_study() -> None:
+def run_holdout_study() -> None:
     """Trains on a held-out template split and saves checkpoint + config."""
     holdout_families = tuple(
         family
@@ -172,16 +182,20 @@ def run_holdout_generalization_study() -> None:
     write_json_data(
         HOLDOUT_GENERALIZATION_CONFIG_PATH,
         {
-            "model_file": HOLDOUT_GENERALIZATION_VALUE_MPC_CHECKPOINT_PATH.name,
+            "checkpoint_file": HOLDOUT_GENERALIZATION_VALUE_MPC_CHECKPOINT_PATH.name,
             "holdout_families": holdout_families,
             "train_families": training_families,
             "train_seed": PRIMARY_TRAINING_SEED,
-            "eval_seed_train": HOLDOUT_GENERALIZATION_EVALUATION_SEED,
-            "eval_seed_holdout": HOLDOUT_GENERALIZATION_EVALUATION_SEED + 1,
+            "train_eval_seed": HOLDOUT_GENERALIZATION_EVALUATION_SEED,
+            "holdout_eval_seed": HOLDOUT_GENERALIZATION_EVALUATION_SEED + 1,
             "train_episodes": PRIMARY_TRAIN_EPISODE_COUNT,
             "eval_episodes": HOLDOUT_GENERALIZATION_EVALUATION_EPISODE_COUNT,
             "max_steps": PRIMARY_MAX_STEP_COUNT,
-            "controller": controller_configuration(controller),
+            "controller": {
+                "label": str(controller.name),
+                "config": controller.configuration_parameters(),
+                "runtime": build_controller_runtime_metadata(controller),
+            },
             "risk_clone": {
                 "risk_penalty": float(
                     risk_controller.risk_penalty),
@@ -197,11 +211,11 @@ def run_holdout_generalization_study() -> None:
 # =============================================================================
 # Pipeline entry point.
 # =============================================================================
-def run_workflow(resume_model: str | None = None) -> None:
+def run_workflow(resume_checkpoint: str | None = None) -> None:
     """Runs the full training and evaluation pipeline."""
     for output_dir in ARTIFACT_OUTPUT_DIRS:
         output_dir.mkdir(parents=True, exist_ok=True)
-    resume_path = Path(resume_model) if resume_model else None
+    resume_path = Path(resume_checkpoint) if resume_checkpoint else None
 
     # 1) Train the primary controller, optionally warm-starting from a saved model.
     if resume_path is not None:
@@ -212,7 +226,7 @@ def run_workflow(resume_model: str | None = None) -> None:
             "run",
             status="start",
             stage="train",
-            task="primary_value_training",
+            task="primary_train",
             mode="resume",
             checkpoint=resume_path,
             episodes=PRIMARY_TRAIN_EPISODE_COUNT,
@@ -229,8 +243,8 @@ def run_workflow(resume_model: str | None = None) -> None:
             "run",
             status="start",
             stage="train",
-            task="primary_value_training",
-            mode="expert_data",
+            task="primary_train",
+            mode="fresh",
             episodes=PRIMARY_TRAIN_EPISODE_COUNT,
         )
         controller.fit_controller(
@@ -252,7 +266,7 @@ def run_workflow(resume_model: str | None = None) -> None:
         "run",
         status="start",
         stage="benchmark",
-        task="level_batch",
+        task="levels",
         episodes=PRIMARY_EVALUATION_EPISODE_COUNT,
     )
     levels = sample_level_batch(
@@ -271,7 +285,7 @@ def run_workflow(resume_model: str | None = None) -> None:
             "run",
             status="start",
             stage="benchmark",
-            task="evaluate",
+            task="eval",
             controller=cli_key(controller_name),
         )
         rows += evaluate_controller_set(
@@ -280,27 +294,27 @@ def run_workflow(resume_model: str | None = None) -> None:
             PRIMARY_MAX_STEP_COUNT,
         )
 
-    # 4) Run holdout generalization study.
+    # 4) Run holdout study.
     log_event(
         "run",
         status="start",
         stage="study",
-        task="holdout_generalization",
+        task="holdout",
     )
-    run_holdout_generalization_study()
+    run_holdout_study()
 
     # 5) Summarize and report.
     summary = summarize_evaluation_records(rows)
     log_event(
         "summary",
         action="emit",
-        report="controller_metrics",
+        report="metrics",
         controller_count=len(summary),
     )
     for row in summary:
         log_event(
             "metric",
-            report="controller_metrics",
+            report="metrics",
             controller=cli_key(str(row["controller_name"])),
             success=f"{row['success_rate']:.3f}",
             steps=f"{row['avg_steps']:.2f}",
@@ -314,14 +328,12 @@ def run_workflow(resume_model: str | None = None) -> None:
 
 def parse_args() -> argparse.Namespace:
     """Parses command-line flags for the experiment pipeline entry point."""
-    parser = argparse.ArgumentParser(
-        description="Run training and evaluation pipeline."
-    )
+    parser = argparse.ArgumentParser()
     parser._optionals.title = "options"
     parser.add_argument(
-        "--resume-model",
+        "-r", "--resume",
         metavar="CHECKPOINT",
-        help="Resume from checkpoint.",
+        help="resume from checkpoint",
     )
     return parser.parse_args()
 
@@ -329,7 +341,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Runs the full training and evaluation pipeline."""
     args = parse_args()
-    run_workflow(args.resume_model)
+    run_workflow(args.resume)
 
 
 if __name__ == "__main__":

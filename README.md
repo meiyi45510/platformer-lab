@@ -18,7 +18,7 @@ PYTHONPATH=src python -m platformer_lab
 Resume from a saved checkpoint:
 
 ```bash
-platformer-lab --resume-model outputs/checkpoint/primary.npz
+platformer-lab --resume outputs/checkpoint/primary.npz
 ```
 
 Set `PLATFORMER_LAB_OUTPUT_DIR` to redirect generated files elsewhere.

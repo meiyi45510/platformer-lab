@@ -179,15 +179,6 @@ def save_controller_snapshot(
     np.savez(path, **capture_controller_state(controller, risk_controller))
 
 
-def controller_configuration(controller: ValueMpcController) -> dict[str, Any]:
-    """Returns the controller settings that should appear in saved metadata."""
-    return controller.configuration_parameters() | build_controller_runtime_metadata(
-        controller
-    ) | {
-        "label": str(controller.name)
-    }
-
-
 def load_controller_snapshot(
     path: Path,
     label: str | None = None,
