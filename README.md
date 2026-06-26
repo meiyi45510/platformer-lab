@@ -1,4 +1,4 @@
-# Platformer Lab
+# platformer-lab
 
 > CLI-first AI showcase for a handcrafted 2D platformer — pure NumPy Value MPC, A* baselines, and risk-aware planning.
 
